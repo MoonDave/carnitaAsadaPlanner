@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
-  Trophy, Users, Plus, Trash2, ShoppingCart, Copy, Check, 
+  Trophy, Users, Plus, Trash2, ShoppingCart, Check, 
   Utensils, CalendarDays, ChevronDown, 
   ChevronUp, Headphones, Send, Loader2, Sparkles, X, 
-  Share2, Ticket, Search, MessageSquare, DollarSign, Clock, Play, Shield, UserPlus, Gamepad2
+  Search, MessageSquare, Gamepad2
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -29,21 +29,15 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-const GEMINI_API_KEY = ""; 
-
 const App = () => {
   // --- ESTADOS ---
   const [people, setPeople] = useState(10);
   const [activeTab, setActiveTab] = useState('calculator');
   const [newItem, setNewItem] = useState({ name: '', amount: '', unit: 'kg' });
-  const [isAdding, setIsAdding] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [inviteCopied, setInviteCopied] = useState(false);
   
-  // Corregido: Estados que aceptan string o null
   const [user, setUser] = useState<any>(null);
   const [partyId, setPartyId] = useState<string | null>(null);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [manualCode, setManualCode] = useState('');
   const [showJoinModal, setShowJoinModal] = useState(false);
   const isRemoteUpdate = useRef(false);
@@ -58,18 +52,14 @@ const App = () => {
   const [chatHistory, setChatHistory] = useState([
     { role: 'model', text: '¡Hola! Soy tu Coach de Parrilla con IA. ¿En qué puedo ayudarte hoy?' }
   ]);
-  const [isAiLoading, setIsAiLoading] = useState(false);
   const [schedule, setSchedule] = useState<string | null>(null);
-  const [isGeneratingSchedule, setIsGeneratingSchedule] = useState(false);
   
-  // Corregido: Ref con tipo HTMLDivElement
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // --- MINI JUEGO ---
   const [gamePhase, setGamePhase] = useState<'start' | 'power' | 'accuracy' | 'running' | 'kicking' | 'result'>('start');
   const [power, setPower] = useState(0);
   const [accuracy, setAccuracy] = useState(50);
-  const [kickResult, setKickResult] = useState<'miss' | 'score' | null>(null);
   const [gameScore, setGameScore] = useState({ made: 0, attempts: 0 });
   const gameLoopRef = useRef<number | null>(null);
   const directionRef = useRef(1);
@@ -95,7 +85,6 @@ const App = () => {
     setGamePhase('power');
     setPower(0);
     setAccuracy(50);
-    setKickResult(null);
     directionRef.current = 1;
   };
 
@@ -110,20 +99,15 @@ const App = () => {
     setGamePhase('running');
     setTimeout(() => {
         setGamePhase('kicking');
-        calculateResult();
+        const scored = power > 60 && (accuracy > 40 && accuracy < 60);
+        setTimeout(() => {
+          setGamePhase('result');
+          setGameScore(prev => ({
+            made: prev.made + (scored ? 1 : 0),
+            attempts: prev.attempts + 1
+          }));
+        }, 800);
     }, 600);
-  };
-
-  const calculateResult = () => {
-    const scored = power > 60 && (accuracy > 40 && accuracy < 60);
-    setTimeout(() => {
-      setKickResult(scored ? 'score' : 'miss');
-      setGamePhase('result');
-      setGameScore(prev => ({
-        made: prev.made + (scored ? 1 : 0),
-        attempts: prev.attempts + 1
-      }));
-    }, 800);
   };
 
   useEffect(() => {
@@ -175,7 +159,11 @@ const App = () => {
 
     if (!currentPartyId) {
       currentPartyId = Math.random().toString(36).substring(2, 7).toUpperCase();
-      saveToDb(currentPartyId, people, initialIngredients, null, []);
+      setDoc(doc(db, 'parties', currentPartyId), {
+        people,
+        ingredients: initialIngredients,
+        lastUpdated: new Date().toISOString()
+      }, { merge: true });
     }
     
     setPartyId(currentPartyId);
@@ -196,11 +184,11 @@ const App = () => {
     });
 
     return () => unsubscribeSnapshot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const saveToDb = async (id: string, p: number, ing: any[], sch: string | null = null, fn: any[] = []) => {
     if (!user || !id) return;
-    setIsSyncing(true);
     try {
       await setDoc(doc(db, 'parties', id), {
         people: p,
@@ -210,7 +198,6 @@ const App = () => {
         lastUpdated: new Date().toISOString()
       }, { merge: true });
     } catch (err) { console.error(err); }
-    finally { setIsSyncing(false); }
   };
 
   const updatePeople = (newVal: number) => {
@@ -222,30 +209,6 @@ const App = () => {
   const updateIngredients = (newIngredients: any[]) => {
     setIngredients(newIngredients);
     if (!isRemoteUpdate.current && partyId) saveToDb(partyId, people, newIngredients, schedule, fans);
-  };
-
-  const handleAddItem = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newItem.name || !newItem.amount) return;
-    const item = { id: Date.now(), name: newItem.name, baseAmount: parseFloat(newItem.amount), unit: newItem.unit, category: 'Rookie' };
-    updateIngredients([...ingredients, item]);
-    setNewItem({ name: '', amount: '', unit: 'kg' });
-    setIsAdding(false);
-  };
-
-  const openFanModal = (team: string) => {
-    setSelectedTeam(team);
-    setShowFanModal(true);
-  };
-
-  const handleAddFan = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!fanName.trim() || !partyId) return;
-    const newFansList = [...fans, { id: Date.now(), name: fanName.trim(), team: selectedTeam }];
-    setFans(newFansList);
-    saveToDb(partyId, people, ingredients, schedule, newFansList);
-    setFanName('');
-    setShowFanModal(false);
   };
 
   const copyInvite = () => {
@@ -261,11 +224,8 @@ const App = () => {
     const userMsg = chatMessage;
     setChatHistory(prev => [...prev, { role: 'user', text: userMsg }]);
     setChatMessage('');
-    setIsAiLoading(true);
-    // Simulación o llamada a API
     setTimeout(() => {
         setChatHistory(prev => [...prev, { role: 'model', text: "¡Oído cocina! El Coach está procesando tu jugada." }]);
-        setIsAiLoading(false);
     }, 1000);
   };
 
@@ -319,8 +279,8 @@ const App = () => {
                     <div 
                         className="text-4xl absolute transition-all duration-700"
                         style={{
-                            bottom: (gamePhase === 'kicking' || gamePhase === 'result') ? '80%' : '10%',
-                            left: (gamePhase === 'kicking' || gamePhase === 'result') ? `${accuracy}%` : '50%',
+                            bottom: gamePhase === 'result' ? '80%' : '10%',
+                            left: gamePhase === 'result' ? `${accuracy}%` : '50%',
                             transform: 'translateX(-50%)'
                         }}
                     >🏈</div>
@@ -369,6 +329,24 @@ const App = () => {
                 </div>
             </div>
         )}
+
+        {activeTab === 'list' && (
+            <div className="bg-white text-black p-6 rounded shadow-lg font-mono">
+                <h2 className="text-xl font-bold mb-4 border-b pb-2">LISTA DE COMPRAS</h2>
+                {ingredients.map(i => (
+                    <div key={i.id} className="flex justify-between py-1 border-b border-slate-100 italic">
+                        <span>{i.name}</span>
+                        <span className="font-bold">{(i.baseAmount * people).toFixed(1)} {i.unit}</span>
+                    </div>
+                ))}
+                {schedule && (
+                    <div className="mt-6 p-4 bg-slate-100 rounded">
+                        <h4 className="font-bold mb-2">CRONOGRAMA IA:</h4>
+                        <p className="text-xs">{schedule}</p>
+                    </div>
+                )}
+            </div>
+        )}
       </main>
 
       {/* Coach Chat */}
@@ -401,7 +379,7 @@ const App = () => {
               <h3 className="text-xl font-bold uppercase italic mb-4">Unirse a Juego</h3>
               <input type="text" value={manualCode} onChange={(e) => setManualCode(e.target.value.toUpperCase())} className="w-full p-4 bg-black border-2 border-slate-600 rounded-lg text-center text-2xl font-mono mb-4" placeholder="CÓDIGO"/>
               <button onClick={() => window.location.search = `?party=${manualCode}`} className="w-full bg-blue-600 py-3 rounded font-bold uppercase">Entrar</button>
-              <button onClick={() => setShowJoinModal(false)} className="w-full py-2 text-slate-500 text-xs mt-2">Cerrar</button>
+              <button onClick={() => setShowJoinModal(false)} className="w-full py-2 text-slate-500 text-xs mt-2 text-center">Cerrar</button>
            </div>
         </div>
       )}
@@ -411,10 +389,19 @@ const App = () => {
         <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4">
            <div className="bg-slate-800 p-6 rounded-xl w-full max-w-sm border border-slate-600">
               <h3 className="text-xl font-bold uppercase mb-4">Apoyar a {selectedTeam}</h3>
-              <form onSubmit={handleAddFan}>
-                <input type="text" value={fanName} onChange={(e) => setFanName(e.target.value)} className="w-full p-3 bg-black border border-slate-600 rounded mb-4" placeholder="Tu Nombre" autoFocus/>
-                <button type="submit" className="w-full bg-blue-600 py-3 rounded font-bold uppercase">Confirmar</button>
-              </form>
+              <div className="space-y-4">
+                <input type="text" value={fanName} onChange={(e) => setFanName(e.target.value)} className="w-full p-3 bg-black border border-slate-600 rounded" placeholder="Tu Nombre" autoFocus/>
+                <button 
+                    onClick={() => {
+                        const newFans = [...fans, { id: Date.now(), name: fanName, team: selectedTeam }];
+                        setFans(newFans);
+                        if(partyId) saveToDb(partyId, people, ingredients, schedule, newFans);
+                        setFanName('');
+                        setShowFanModal(false);
+                    }} 
+                    className="w-full bg-blue-600 py-3 rounded font-bold uppercase"
+                >Confirmar</button>
+              </div>
            </div>
         </div>
       )}
